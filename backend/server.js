@@ -3,14 +3,36 @@ const express    = require('express');
 const cors       = require('cors');
 const cron       = require('node-cron');
 const pgvector   = require('pgvector/pg');
+const multer     = require('multer');
+const pdfParse   = require('pdf-parse');
+const fs         = require('fs');
 const db         = require('./db');
 const migrate    = require('./migrations/migrate');
 const { warmup, getEmbedding, getChunkEmbeddings, cosineSimilarity, scoreSkillMatch } = require('./utils/embeddings');
 const { promoteApplicants, queueEvents, logTransition } = require('./utils/queue');
+const { router: authRoutes, authenticateToken } = require('./routes/auth');
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    if (!fs.existsSync('./uploads')) {
+      fs.mkdirSync('./uploads');
+    }
+    cb(null, './uploads/');
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+const upload = multer({ storage });
 
 const app  = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(cors());
+
+// Expose static uploads
+app.use('/uploads', express.static('uploads'));
+app.use('/auth', authRoutes);
 
 // ================================================================
 // STARTUP
@@ -49,9 +71,13 @@ function fromVec(val) {
 // ================================================================
 
 // POST /jobs — create a job and embed its JD + skills
-app.post('/jobs', async (req, res) => {
+app.post('/jobs', authenticateToken, async (req, res) => {
   try {
-    const { title, description, capacity, skills, ack_window_hours } = req.body;
+    if (req.user.role !== 'recruiter') {
+      return res.status(403).json({ error: 'Only recruiters can post jobs' });
+    }
+
+    const { title, description, capacity, skills, ack_window_hours, opening_date, closing_date, threshold_score } = req.body;
 
     if (!title || !description || !capacity || !Array.isArray(skills) || skills.length === 0) {
       return res.status(400).json({ error: 'title, description, capacity, and skills[] are required' });
@@ -62,10 +88,10 @@ app.post('/jobs', async (req, res) => {
 
     // Insert job row
     const jobRes = await db.query(
-      `INSERT INTO jobs (title, description, active_capacity, required_skills, jd_embedding, ack_window_hours)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, title, description, active_capacity, required_skills, ack_window_hours, status, created_at`,
-      [title, description, capacity, JSON.stringify(skills), toVec(jdVec), ack_window_hours || 24]
+      `INSERT INTO jobs (title, description, active_capacity, required_skills, jd_embedding, ack_window_hours, recruiter_id, opening_date, closing_date, threshold_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id, title, description, active_capacity, required_skills, ack_window_hours, status, created_at, opening_date, closing_date, threshold_score`,
+      [title, description, capacity, JSON.stringify(skills), toVec(jdVec), ack_window_hours || 24, req.user.id, opening_date || new Date(), closing_date || null, threshold_score || 0]
     );
     const job = jobRes.rows[0];
 
@@ -89,11 +115,18 @@ app.post('/jobs', async (req, res) => {
 // GET /jobs — list all jobs (no vectors)
 app.get('/jobs', async (req, res) => {
   try {
-    const result = await db.query(
-      `SELECT id, title, description, active_capacity AS capacity, required_skills AS skills,
-              ack_window_hours, status, created_at
-       FROM jobs ORDER BY created_at DESC`
-    );
+    const { search } = req.query;
+    let query = `SELECT id, title, description, active_capacity AS capacity, required_skills AS skills,
+                        ack_window_hours, status, created_at, opening_date, closing_date, threshold_score
+                 FROM jobs`;
+    let params = [];
+    if (search) {
+      query += ` WHERE title ILIKE $1 OR description ILIKE $1`;
+      params.push(`%${search}%`);
+    }
+    query += ` ORDER BY created_at DESC`;
+
+    const result = await db.query(query, params);
     // _id alias for frontend compat
     const jobs = result.rows.map(j => ({ ...j, _id: j.id }));
     res.json(jobs);
@@ -108,12 +141,26 @@ app.get('/jobs', async (req, res) => {
 // ================================================================
 
 // POST /applicants — submit a resume with advisory lock to prevent over-promotion
-app.post('/applicants', async (req, res) => {
+app.post('/applicants', authenticateToken, upload.single('resume'), async (req, res) => {
   try {
-    const { jobId, name, email, resume_text } = req.body;
+    if (req.user.role !== 'student') {
+      return res.status(403).json({ error: 'Only students can apply' });
+    }
 
-    if (!jobId || !name || !resume_text) {
-      return res.status(400).json({ error: 'jobId, name, and resume_text are required' });
+    const { jobId, name, email } = req.body;
+    
+    // We extracted resume file using multer
+    if (!jobId || !name || !req.file) {
+      return res.status(400).json({ error: 'jobId, name, and resume file are required' });
+    }
+
+    // Extract text from the uploaded PDF
+    const pdfBuffer = fs.readFileSync(req.file.path);
+    const pdfData = await pdfParse(pdfBuffer);
+    const resume_text = pdfData.text.trim();
+
+    if (!resume_text) {
+      return res.status(400).json({ error: 'Could not extract text from the provided PDF. Please ensure it is a valid text-based PDF.' });
     }
 
     // --- Scoring (outside the transaction — can be slow) ---
@@ -176,14 +223,14 @@ app.post('/applicants', async (req, res) => {
 
       const insertRes = await client.query(
         `INSERT INTO applicants
-           (job_id, name, email, resume_text, resume_embedding,
+           (job_id, user_id, name, email, resume_text, resume_embedding,
             skill_match_score, semantic_score, final_score, original_score,
-            status, promoted_at, ack_deadline)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11)
+            status, promoted_at, ack_deadline, resume_file_path)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12,$13)
          RETURNING *`,
         [
-          jobId, name, email || null, resume_text, toVec(resumeVec),
-          skillScore, semanticScore, finalScore, status, promotedAt, ackDeadline
+          jobId, req.user.id, name, email || null, resume_text, toVec(resumeVec),
+          skillScore, semanticScore, finalScore, status, promotedAt, ackDeadline, req.file.path
         ]
       );
       newApplicant = insertRes.rows[0];
@@ -357,32 +404,35 @@ app.get('/applicants/:id/position', async (req, res) => {
 app.get('/jobs/:id/waitlist', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id,
-              id             AS _id,      -- compat alias
-              job_id,
-              name,
-              email,
-              status,
-              skill_match_score AS skills_score,  -- matches frontend key
-              semantic_score,
-              final_score,
-              original_score,
-              decay_count,
-              promoted_at,
-              ack_deadline,
-              acknowledged_at,
-              created_at
-       FROM applicants
-       WHERE job_id = $1
+      `SELECT a.id,
+              a.id             AS _id,      -- compat alias
+              a.job_id,
+              a.name,
+              a.email,
+              a.status,
+              a.skill_match_score AS skills_score,  -- matches frontend key
+              a.semantic_score,
+              a.final_score,
+              a.original_score,
+              a.decay_count,
+              a.promoted_at,
+              a.ack_deadline,
+              a.acknowledged_at,
+              a.created_at,
+              a.resume_file_path
+       FROM applicants a
+       JOIN jobs j ON j.id = a.job_id
+       WHERE a.job_id = $1
+         AND a.final_score >= j.threshold_score
        ORDER BY
-         CASE status
+         CASE a.status
            WHEN 'active_review' THEN 1
            WHEN 'acknowledged'  THEN 2
            WHEN 'waitlisted'    THEN 3
            WHEN 'decayed'       THEN 4
            ELSE 5
          END,
-         final_score DESC`,
+         a.final_score DESC`,
       [req.params.id]
     );
     res.json(result.rows);

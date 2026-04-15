@@ -5,10 +5,13 @@ const db   = require('../db');
 
 async function migrate() {
   console.log('Running database migrations...');
-  const sql = fs.readFileSync(path.join(__dirname, '001_init.sql'), 'utf8');
+  const files = fs.readdirSync(__dirname).filter(f => f.endsWith('.sql')).sort();
   try {
-    await db.query(sql);
-    console.log('✅  Migration 001_init.sql applied successfully.');
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(__dirname, file), 'utf8');
+      await db.query(sql);
+      console.log(`✅  Migration ${file} applied successfully.`);
+    }
   } catch (err) {
     // pg throws AggregateError on connection failures — .message is often empty
     const detail = err.message || (err.errors && err.errors.map(e => e.message).join(', ')) || String(err);
