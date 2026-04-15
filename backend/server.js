@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express    = require('express');
 const cors       = require('cors');
-const cron       = require('node-cron');
 const pgvector   = require('pgvector/pg');
 const multer     = require('multer');
 const pdfParse   = require('pdf-parse');
@@ -493,9 +492,9 @@ app.get('/stream/jobs/:jobId', (req, res) => {
 });
 
 // ================================================================
-// CRON — ACK DEADLINE DECAY CASCADE (every 60 seconds)
+// BACKGROUND JOB — ACK DEADLINE DECAY CASCADE (every 60 seconds)
 // ================================================================
-cron.schedule('* * * * *', async () => {
+const runDecayCascade = async () => {
   try {
     // Find all applicants whose ack window expired
     const expired = await db.query(
@@ -538,9 +537,14 @@ cron.schedule('* * * * *', async () => {
       await promoteApplicants(jobId);
     }
   } catch (err) {
-    console.error('Decay cron error:', err);
+    console.error('Decay background job error:', err);
   }
-});
+};
+
+// Start the native polling loop
+setInterval(() => {
+  runDecayCascade();
+}, 60_000);
 
 // ================================================================
 // BOOT
