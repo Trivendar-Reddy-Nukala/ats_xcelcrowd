@@ -13,7 +13,7 @@ function App() {
     getJobs().then(data => {
       setJobs(data);
       if(data.length > 0 && !activeJobId) {
-        setActiveJobId(data[0]._id);
+        setActiveJobId(data[0].id || data[0]._id);
       }
     });
   }, [activeJobId]);

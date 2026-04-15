@@ -30,4 +30,4 @@ dist-ssr
 .env.local
 
 # Docker Data
-mongodb_data/
+pg_data/
