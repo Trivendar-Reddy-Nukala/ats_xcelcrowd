@@ -7,10 +7,10 @@ import AdminView from './components/AdminView';
 function PrivateRoute({ children, role }) {
   const token = localStorage.getItem('ats_token');
   const userRole = localStorage.getItem('ats_role');
-  
+
   if (!token) return <Navigate to="/auth" />;
   if (role && userRole !== role) return <Navigate to="/" />;
-  
+
   return children;
 }
 
@@ -37,12 +37,12 @@ function App() {
             </div>
             <Link to="/">
               <span className="font-bold text-xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-                Antigravity ATS
+                Xcelcrowd ATS
               </span>
             </Link>
           </div>
           <div className="flex space-x-4">
-            <button 
+            <button
               className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white"
               onClick={() => {
                 localStorage.clear();

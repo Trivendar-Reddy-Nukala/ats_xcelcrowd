@@ -279,12 +279,12 @@ export default function AdminView() {
                           <div className="bg-darker border border-white/10 px-3 py-1 pb-1.5 rounded-lg">
                             <div className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold mb-0.5">Score</div>
                             <div className="font-mono text-xl font-black text-primary leading-none">
-                              {(w.final_score * 100).toFixed(1)}
+                              {(w.final_score || 0).toFixed(1)}
                             </div>
                           </div>
                           <div className="flex gap-2 mt-1 text-[10px] font-mono text-gray-400 justify-end">
-                            <span>S:{(w.semantic_score * 100).toFixed(0)}</span>
-                            <span>K:{((w.skills_score || w.skill_match_score || 0) * 100).toFixed(0)}</span>
+                            <span>S:{(w.semantic_score || 0).toFixed(0)}</span>
+                            <span>K:{((w.skills_score || w.skill_match_score || 0)).toFixed(0)}</span>
                           </div>
                         </div>
 

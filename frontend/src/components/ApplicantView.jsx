@@ -243,19 +243,19 @@ export default function ApplicantView() {
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Skill Match</span>
                   <span className="font-mono font-bold text-primary">
-                    {((myScore.skill_match_score || 0) * 100).toFixed(1)}
+                    {(myScore.skill_match_score || 0).toFixed(1)}<span className="text-gray-500 text-xs">/100</span>
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Semantic</span>
                   <span className="font-mono font-bold text-secondary">
-                    {((myScore.semantic_score || 0) * 100).toFixed(1)}
+                    {(myScore.semantic_score || 0).toFixed(1)}<span className="text-gray-500 text-xs">/100</span>
                   </span>
                 </div>
                 <div className="flex justify-between text-sm border-t border-white/10 pt-2">
                   <span className="text-gray-300 font-semibold">Composite final score</span>
                   <span className="font-mono font-black text-white text-base">
-                    {((myScore.final_score || 0) * 100).toFixed(1)}
+                    {(myScore.final_score || 0).toFixed(1)}<span className="text-gray-500 text-sm">/100</span>
                   </span>
                 </div>
               </div>

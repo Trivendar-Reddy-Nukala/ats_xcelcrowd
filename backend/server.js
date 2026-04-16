@@ -255,12 +255,12 @@ app.post('/applicants', authenticateToken, upload.single('resume'), async (req, 
     queueEvents.emit('state_change', { jobId, type: 'new_applicant' });
 
     res.status(201).json({
-      id:             newApplicant.id,
-      _id:            newApplicant.id, // compat
-      status:         newApplicant.status,
-      final_score:    newApplicant.final_score,
-      skill_match_score: newApplicant.skill_match_score,
-      semantic_score: newApplicant.semantic_score,
+      id:                newApplicant.id,
+      _id:               newApplicant.id, // compat
+      status:            newApplicant.status,
+      final_score:       parseFloat((newApplicant.final_score * 100).toFixed(2)),
+      skill_match_score: parseFloat((newApplicant.skill_match_score * 100).toFixed(2)),
+      semantic_score:    parseFloat((newApplicant.semantic_score * 100).toFixed(2)),
     });
   } catch (err) {
     console.error('POST /applicants error:', err);
@@ -434,7 +434,14 @@ app.get('/jobs/:id/waitlist', async (req, res) => {
          a.final_score DESC`,
       [req.params.id]
     );
-    res.json(result.rows);
+    const normalized = result.rows.map(row => ({
+      ...row,
+      final_score:       row.final_score       != null ? parseFloat((row.final_score * 100).toFixed(2))       : null,
+      original_score:    row.original_score     != null ? parseFloat((row.original_score * 100).toFixed(2))     : null,
+      semantic_score:    row.semantic_score     != null ? parseFloat((row.semantic_score * 100).toFixed(2))     : null,
+      skills_score:      row.skills_score       != null ? parseFloat((row.skills_score * 100).toFixed(2))       : null,
+    }));
+    res.json(normalized);
   } catch (err) {
     console.error('GET /jobs/:id/waitlist error:', err);
     res.status(500).json({ error: err.message });
